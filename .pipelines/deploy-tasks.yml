@@ -1,0 +1,117 @@
+# This template is useful to SpringBoot Apps that deploys on Openshift platform.
+# Notes:
+# - You must ensure that the variables have a value: appName, appRoute, ocpNamespace, ocpToken
+#     appName -> the used aplication's name for Openshift to creates the pod. This variable is declared on variables.yml
+#     appRoute -> the domain where the app is. This is declared on azure-pipelines.yml
+#     appPath --> the subpath where the app is located. This is declared on azure-pipeline.yml and is used by deploy-template.yaml
+#     ocpNamespace -> the namespace or openshift project where the aplication's pod is installed. This is declared on azure-pipelines.yml
+#     ocpToken -> the token that Openshift requires to do the deployments. This is declared on variable groups: 'openshift-cluster1-connection-variables' and ''openshift-cluster2-connection-variables'
+#     ocpURL -> the URL that Openshift requires to do the deployments. This is declared on variable groups: 'openshift-cluster1-connection-variables' and ''openshift-cluster2-connection-variables'
+#     appSSLMercadopublico -> defines if is used mercadopublico.cl SSL. Values: true or false
+#     appSSLChilecompra -> defines if is used chilecompra.cl SSL. Values: true or false
+#     fileProperties -> indicates the filename contains used key-value pairs to create the Pod's configmap 
+
+# commons deploy task for the 3 stages: Development_Deployment, PreProduction_Deployment, Production_Deployment
+steps:
+  - task: DownloadPipelineArtifact@2
+    displayName: 'download pipeline artifact'
+    inputs:
+      buildType: 'current'
+      artifactName: 'drop'
+      targetPath: '$(System.DefaultWorkingDirectory)/drop'
+  - task: ExtractFiles@1
+    displayName: 'extract files'
+    inputs:
+      archiveFilePatterns: '$(System.DefaultWorkingDirectory)/drop/$(Build.BuildId).zip'
+      destinationFolder: '$(System.DefaultWorkingDirectory)/_artifact'
+      cleanDestinationFolder: true
+  # here the pipeline creates the file application.properties include all declared pairs from $(fileProperties)     
+  - task: Bash@3
+    displayName: 'oc - login'
+    inputs:
+      targetType: 'inline'
+      script: 'oc login --server=$(ocpURL) --username=$(ocpUsername) --password=$(ocpPassword) --insecure-skip-tls-verify=false --namespace=$(ocpNamespace)'
+  # here the pipeline creates the file application.properties include all declared pairs from $(fileProperties)    
+  - task: Bash@3
+    displayName: 'creating application.properties file'
+    inputs:
+      targetType: 'inline'
+      script: 'cp $(System.DefaultWorkingDirectory)/_artifact/.openshift/$(fileProperties) $(System.DefaultWorkingDirectory)/_artifact/.openshift/application.properties'      
+  # the "oc - deleting configmap" task is declared to delete existed configmap in the openshift project
+  # this task only can fails when the configmap to delete is not found, but the pipeline's run will continue. 
+  # The fail scenario happens only the pipeline's first run.
+  # in openshift there isn't command to update a configmap, then with this task and the next, 
+  # the pipeline deletes and creates a configmap
+  - task: Bash@3
+    displayName: 'oc - deleting configmap'
+    inputs:
+      targetType: 'inline'
+      script: 'oc delete configmap $(appName)-config'        
+    continueOnError: true
+  # this task is important to create again the configmap from created application.properties with new key-value pairs    
+  - task: Bash@3
+    displayName: 'oc - creating configmap'
+    inputs:
+      targetType: 'inline'
+      script: 'oc create configmap $(appName)-config --from-file=$(System.DefaultWorkingDirectory)/_artifact/.openshift/application.properties'
+  - task: Bash@3
+    displayName: 'local - process deploy template'
+    inputs:
+      targetType: 'inline'
+      script: |
+        oc process -f $(System.DefaultWorkingDirectory)/_artifact/.openshift/deploy-template.yaml \
+        -p APP_NAMESPACE=$(ocpNamespace) \
+        -p APP_NAME=$(appName) \
+        -p APP_HOST=$(appHost) \
+        -p APP_PATH=$(appPath) \
+        -p APP_DOMAIN=$(appDomain) \
+        -p APP_VERSION=$(appVersion) \
+        -p APP_BUILDID=$(Build.BuildId) \
+        --local > $(System.DefaultWorkingDirectory)/_artifact/.openshift/deploy.yaml
+  - task: Bash@3
+    displayName: 'local - process build template'
+    inputs:
+      targetType: 'inline'
+      script: |
+        oc process -f $(System.DefaultWorkingDirectory)/_artifact/.openshift/build-template.yaml \
+        -p APP_NAME=$(appName) \
+        -p APP_NAMESPACE=$(ocpNamespace) \
+        -p APP_VERSION=$(appVersion) \
+        -p APP_BUILDID=$(Build.BuildId) \
+        --local > $(System.DefaultWorkingDirectory)/_artifact/.openshift/build.yaml
+  - task: Bash@3
+    displayName: 'oc - apply deploy'
+    inputs:
+      targetType: 'inline'
+      script: 'oc apply -f $(System.DefaultWorkingDirectory)/_artifact/.openshift/deploy.yaml'
+  - task: Bash@3
+    displayName: 'oc - pause deployment rollout'
+    inputs:
+      targetType: 'inline'
+      script: 'oc rollout pause dc/$(appName)'
+  - task: Bash@3
+    displayName: 'oc - apply build'
+    inputs:
+      targetType: 'inline'
+      script: 'oc apply -f $(System.DefaultWorkingDirectory)/_artifact/.openshift/build.yaml'
+  - task: Bash@3
+    displayName: 'oc - start build'
+    inputs:
+      targetType: 'inline'
+      script: 'oc start-build $(appName) --from-dir=$(System.DefaultWorkingDirectory)/_artifact/target/. --wait --follow'
+  - task: Bash@3
+    displayName: 'oc - rollout deployment'
+    inputs:
+      targetType: 'inline'
+      script: 'oc rollout resume dc/$(appName)'
+  - task: Bash@3
+    displayName: 'oc - logout'
+    inputs:
+      targetType: 'inline'
+      script: 'oc logout'
+  - task: DeleteFiles@1
+    displayName: 'delete used resources'
+    inputs:
+      SourceFolder: '$(System.DefaultWorkingDirectory)'
+      Contents: '**/*'
+      RemoveSourceFolder: true

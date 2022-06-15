@@ -1,0 +1,202 @@
+# Here you must invoke "db-config" Secret's variables to use them in your pod
+# Reminder: The secret called "db-config" must have been created in the openshift project ${APP_NAMESPACE}  
+# before this script's execution. For more details you can contact the Operation's team. 
+
+kind: Template
+apiVersion: v1
+metadata:
+  name: deploy-mserv-java-springboot
+objects:
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    creationTimestamp: null
+    generation: 1
+    labels:
+      app: ${APP_NAME}
+      version: ${APP_VERSION}
+    name: ${APP_NAME}
+    namespace: ${APP_NAMESPACE}
+  spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      app: ${APP_NAME}
+      deploymentconfig: ${APP_NAME}
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${APP_NAME}
+          version: ${APP_VERSION}
+          build: ${APP_BUILDID}
+          deploymentconfig: ${APP_NAME}
+      spec:
+        containers:
+        - env:
+          - name: TZ
+            value: America/Santiago
+          - name: db-username
+            valueFrom:
+              secretKeyRef:
+                name: db-config
+                key: db-username
+          - name: db-password
+            valueFrom:
+              secretKeyRef:
+                name: db-config
+                key: db-password
+          - name: jdbc-url
+            valueFrom:
+              secretKeyRef:
+                name: db-config
+                key: jdbc-url
+          image: docker-registry.default.svc:5000/${APP_NAMESPACE}/${APP_NAME}
+          imagePullPolicy: Always
+          name: ${APP_NAME}
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+          - containerPort: 8443
+            protocol: TCP
+          - containerPort: 8778
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /deployments/config
+            name: volume-znfkb
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        # here you invoke the configmap which contains the used key-value pairs 
+        # for Springboot project in the application.properties. 
+        # reminder: the configmap's name is defined the value of APP_NAME and the word "-config"
+        - configMap:
+            defaultMode: 420
+            name: ${APP_NAME}-config   
+          name: volume-znfkb
+    test: false
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - ${APP_NAME}
+        from:
+          kind: ImageStreamTag
+          name: ${APP_NAME}:${APP_VERSION}.${APP_BUILDID}
+      type: ImageChange
+  status: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      app: ${APP_NAME}
+    name: ${APP_NAME}
+    namespace: ${APP_NAMESPACE}
+  spec:
+    ports:
+    - name: 8080-tcp
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: 8443-tcp
+      port: 8443
+      protocol: TCP
+      targetPort: 8443
+    - name: 8778-tcp
+      port: 8778
+      protocol: TCP
+      targetPort: 8778
+    selector:
+      app: ${APP_NAME}
+      deploymentconfig: ${APP_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    generation: 1
+    labels:
+      build: ${APP_NAME}
+    name: ${APP_NAME}
+    namespace: ${APP_NAMESPACE}
+  spec:
+    lookupPolicy:
+      local: false
+  status: {}
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: ${APP_NAME}
+    name: ${APP_NAME}
+    namespace: ${APP_NAMESPACE}
+    annotations:
+      haproxy.router.openshift.io/timeout: 300s
+  spec:
+    port:
+      targetPort: 8080-tcp
+    tls:
+      termination: edge
+    to:
+      kind: Service
+      name: ${APP_NAME}
+      weight: 100
+    wildcardPolicy: None
+  status: {}
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: ${APP_NAME}
+      type: ${APP_DOMAIN}
+    name: ${APP_NAME}-short
+    namespace: ${APP_NAMESPACE}
+    annotations:
+      haproxy.router.openshift.io/timeout: 300s
+  spec:
+    host: ${APP_HOST}
+    path: ${APP_PATH}
+    port:
+      targetPort: 8080-tcp
+    tls:
+      termination: edge
+    to:
+      kind: Service
+      name: ${APP_NAME}
+      weight: 100
+    wildcardPolicy: None
+  status: {}
+
+parameters:
+- name: APP_NAMESPACE
+  required: true
+- name: APP_NAME
+  required: true
+- name: APP_DOMAIN
+  required: true
+- name: APP_HOST
+  required: true
+- name: APP_PATH
+  required: true
+- name: APP_VERSION
+  required: true
+- name: APP_BUILDID
+  required: true

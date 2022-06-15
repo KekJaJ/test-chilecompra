@@ -1,0 +1,19 @@
+# This template is useful to declare used variables on the pipeline
+
+
+# This template is useful to declare used variables on the pipeline
+
+variables:
+
+# used variables around at all Stages: Development_Deployment, PreProduction_Deployment, Production_Deployment.
+# 'appName' is invoked in files: build-tasks.yaml and deploy-tasks.yaml
+  - name: appName
+    value: 'mserv-envio-correo'
+  - name: appPath
+    value: "/v1/correo"
+  - name: appVersion
+    value: "1.0" 
+  - name: System.Debug
+    value: false
+  - name: appDomain
+    value: mp-nombre

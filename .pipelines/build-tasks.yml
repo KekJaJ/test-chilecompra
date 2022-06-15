@@ -1,0 +1,39 @@
+# This template is useful to SpringBoot Apps that deploys on Openshift platform.
+# This template creates an artifact (.jar file) and compress it including .openshift directory.
+
+steps:
+  - task: Maven@3
+    displayName: 'Generate artifact with Maven'
+    inputs:
+      mavenPomFile: 'pom.xml'
+      goals: 'package deploy'
+      publishJUnitResults: true
+      javaHomeOption: 'JDKVersion'
+      jdkVersionOption: '1.8'
+      mavenVersionOption: 'Default'
+      mavenAuthenticateFeed: true
+      effectivePomSkip: true
+      sonarQubeRunAnalysis: false    
+  - task: CopyFiles@2
+    displayName: 'Copy .jar file and .openshift directory'
+    inputs:
+      SourceFolder: '$(system.defaultworkingdirectory)'
+      Contents: |
+        **/*.jar
+        **/.openshift/**
+      targetFolder: '$(System.DefaultWorkingDirectory)/artifact'
+      CleanTargetFolder: true
+  - task: ArchiveFiles@2
+    displayName: 'Create zip file contains .jar file and .openshift directory'
+    inputs:
+      rootFolderOrFile: '$(System.DefaultWorkingDirectory)/artifact'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+      replaceExistingArchive: true
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish pipeline artifact'
+    inputs:
+      targetPath: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+      artifact: 'drop'
+      publishLocation: 'pipeline'
